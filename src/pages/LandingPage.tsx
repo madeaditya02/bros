@@ -59,7 +59,7 @@ export default function LandingPage() {
                 Pastikan Jalanan Tetap Aman dengan <span className="text-primary">BROS</span>
               </h1>
               <p className="text-lg text-secondary mb-8 max-w-lg leading-relaxed">
-                Sistem pelaporan kerusakan jalan berbasis Bad Road Observation System. Laporkan lubang, retakan, atau penutup manhole yang rusak dalam hitungan detik.
+                Bad Road Observation System (BROS), Sistem pelaporan kerusakan jalan terintegrasi teknologi AI. Laporkan lubang, retakan, atau penutup manhole yang rusak dalam hitungan detik.
               </p>
               <div className="flex flex-wrap gap-4">
                 <button

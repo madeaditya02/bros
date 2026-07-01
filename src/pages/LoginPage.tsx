@@ -3,23 +3,38 @@ import { useNavigate } from 'react-router';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    // Predefined login credentials for demonstration
-    if (email === 'admin@bros.id' && password === 'admin123') {
-      sessionStorage.setItem('admin_logged_in', 'true');
-      sessionStorage.setItem('admin_email', email);
-      navigate('/admin/dashboard');
-    } else {
-      setError('Kredensial salah. Gunakan admin@bros.id / admin123');
+    try {
+      const response = await fetch('https://backend-apdd.razik.workers.dev/api/admin/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ username, password })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.status === 'success') {
+        sessionStorage.setItem('admin_token', data.token);
+        sessionStorage.setItem('admin_logged_in', 'true');
+        sessionStorage.setItem('admin_email', username); // save username as email fallback for display
+        navigate('/admin/dashboard');
+      } else {
+        setError(data.message || 'Kredensial salah. Silakan coba lagi.');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setError('Gagal menghubungi server. Periksa koneksi internet Anda.');
     }
   };
 
@@ -59,23 +74,23 @@ export default function LoginPage() {
             )}
 
             <form onSubmit={handleLogin} className="space-y-6">
-              {/* Email Field */}
+              {/* Username Field */}
               <div className="space-y-2">
-                <label className="block text-sm font-semibold text-on-surface" htmlFor="email">
-                  Email Address
+                <label className="block text-sm font-semibold text-on-surface" htmlFor="username">
+                  Username
                 </label>
                 <div className="relative">
                   <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-xl select-none">
-                    mail
+                    person
                   </span>
                   <input
-                    id="email"
-                    type="email"
+                    id="username"
+                    type="text"
                     required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
                     className="w-full pl-10 pr-4 py-3 bg-surface border border-outline focus:border-primary focus:ring-1 focus:ring-primary rounded-lg transition-all outline-none text-sm text-on-surface"
-                    placeholder="admin@bros.id"
+                    placeholder="Masukkan username Anda"
                   />
                 </div>
               </div>

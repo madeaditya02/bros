@@ -1,17 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams, Link } from 'react-router';
-import { getReports, updateReportStatus, addAdminNote } from '../reportsState';
+import { getAdminReportById, updateReportStatus, deleteReport } from '../reportsState';
 import type { Report } from '../reportsState';
 import AdminSidebar from '../components/AdminSidebar';
 import AdminHeaderProfile from '../components/AdminHeaderProfile';
+import { CgSpinner } from 'react-icons/cg';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 export default function ReportDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const [report, setReport] = useState<Report | null>(null);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
-  const [newNote, setNewNote] = useState('');
-  const [noteAuthor, setNoteAuthor] = useState('Admin Siti'); // Default mock author
+  const [loading, setLoading] = useState(true);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+
+  const loadReport = async () => {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getAdminReportById(id);
+      setReport(data);
+    } catch (err) {
+      console.error('Error fetching report:', err);
+      setError('Laporan tidak ditemukan atau Anda tidak memiliki akses admin.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (sessionStorage.getItem('admin_logged_in') !== 'true') {
@@ -21,39 +43,119 @@ export default function ReportDetailPage() {
     loadReport();
   }, [id, navigate]);
 
-  const loadReport = () => {
-    const reports = getReports();
-    // Match ID by adding '#' back
-    const matchedReport = reports.find((r) => r.id.replace('#', '') === id);
-    if (matchedReport) {
-      setReport(matchedReport);
-    } else {
-      setReport(null);
-    }
-  };
+  // Leaflet Map Initialization for Admin Detail (Read-only display)
+  useEffect(() => {
+    if (!loading && report && mapContainerRef.current) {
+      if (!mapRef.current) {
+        mapRef.current = L.map(mapContainerRef.current, {
+          zoomControl: false,
+          dragging: false,
+          touchZoom: false,
+          doubleClickZoom: false,
+          scrollWheelZoom: false,
+          boxZoom: false,
+          keyboard: false
+        }).setView([report.latitude, report.longitude], 15);
 
-  const handleStatusChange = (newStatus: Report['status']) => {
-    if (report) {
-      const updated = updateReportStatus(report.id, newStatus);
-      if (updated) {
-        setReport(updated);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(mapRef.current);
+
+        const markerIcon = L.divIcon({
+          html: `<div class="relative flex items-center justify-center" style="width: 40px; height: 40px;">
+                   <span class="material-symbols-outlined text-primary text-5xl select-none" style="font-variation-settings: 'FILL' 1; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); transform: translateY(-16px); position: absolute;">location_on</span>
+                   <div class="absolute w-4 h-1 bg-black/20 rounded-full blur-[1px]" style="bottom: 0px;"></div>
+                 </div>`,
+          className: 'custom-map-pin',
+          iconSize: [40, 40],
+          iconAnchor: [20, 40]
+        });
+
+        L.marker([report.latitude, report.longitude], {
+          icon: markerIcon
+        }).addTo(mapRef.current);
+      } else {
+        mapRef.current.setView([report.latitude, report.longitude], 15);
+        setTimeout(() => {
+          mapRef.current?.invalidateSize();
+        }, 100);
       }
-      setShowStatusMenu(false);
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [loading, report]);
+
+  const handleStatusChange = async (newStatus: Report['status']) => {
+    if (report) {
+      try {
+        await updateReportStatus(report.id, newStatus);
+        setReport({ ...report, status: newStatus });
+        setShowStatusMenu(false);
+      } catch (err) {
+        console.error('Error updating status:', err);
+        alert('Gagal memperbarui status laporan.');
+      }
     }
   };
 
-  const handleAddNote = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newNote.trim() || !report) return;
-
-    const updated = addAdminNote(report.id, newNote, noteAuthor);
-    if (updated) {
-      setReport(updated);
-      setNewNote('');
+  const handleDeleteReport = async () => {
+    if (report && window.confirm(`Apakah Anda yakin ingin menghapus laporan ${report.id} secara permanen?`)) {
+      setDeleteLoading(true);
+      try {
+        await deleteReport(report.id);
+        alert(`Laporan ${report.id} berhasil dihapus.`);
+        navigate('/admin/reports');
+      } catch (err) {
+        console.error('Delete error:', err);
+        alert('Gagal menghapus laporan.');
+      } finally {
+        setDeleteLoading(false);
+      }
     }
   };
 
-  if (!report) {
+  const getAiClassNames = (report: any) => {
+    if (report && report.ai_raw_response && Array.isArray(report.ai_raw_response) && report.ai_raw_response.length > 0) {
+      const classes = report.ai_raw_response.map((det: any) => det.class);
+      return Array.from(new Set(classes)).join(', ');
+    }
+    return 'Road Damage';
+  };
+
+  const getStatusBadgeClass = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'bg-surface-dim text-on-surface border-outline';
+      case 'verified':
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'in_progress':
+        return 'bg-amber-50 text-amber-700 border-amber-200';
+      case 'repaired':
+        return 'bg-green-100 text-green-700 border-green-200';
+      case 'rejected':
+        return 'bg-red-100 text-red-700 border-red-200';
+      default:
+        return 'bg-surface-dim text-on-surface border-outline';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-surface text-on-surface flex min-h-screen">
+        <AdminSidebar />
+        <main className="flex-grow pl-64 min-h-screen flex items-center justify-center">
+          <CgSpinner className="animate-spin text-primary text-5xl" />
+        </main>
+      </div>
+    );
+  }
+
+  if (error || !report) {
     return (
       <div className="bg-surface text-on-surface flex min-h-screen">
         <AdminSidebar />
@@ -62,7 +164,7 @@ export default function ReportDetailPage() {
             <span className="material-symbols-outlined text-error text-5xl mb-4">warning</span>
             <h2 className="text-xl font-bold mb-2">Laporan Tidak Ditemukan</h2>
             <p className="text-secondary text-sm mb-6">
-              Detail laporan dengan ID #{id} tidak ada dalam sistem atau telah dihapus.
+              {error || `Detail laporan tidak ditemukan.`}
             </p>
             <Link to="/admin/reports" className="px-6 py-2.5 bg-primary text-on-primary rounded-lg font-semibold text-sm">
               Kembali ke Daftar Laporan
@@ -72,9 +174,6 @@ export default function ReportDetailPage() {
       </div>
     );
   }
-
-  // Calculate severity bars (1 to 5)
-  const severityBars = report.severity === 'High' ? 5 : report.severity === 'Medium' ? 3 : 1;
 
   return (
     <div className="bg-surface text-on-surface flex min-h-screen">
@@ -91,7 +190,7 @@ export default function ReportDetailPage() {
                 Reports
               </Link>
               <span className="mx-2 text-outline-variant">/</span>
-              <span className="text-on-surface font-bold">Report Detail {report.id}</span>
+              <span className="text-on-surface font-bold font-mono">Detail {report.id}</span>
             </nav>
           </div>
           <div className="flex items-center gap-4">
@@ -101,7 +200,7 @@ export default function ReportDetailPage() {
             <div className="h-8 w-[1px] bg-outline-variant"></div>
             <button 
               onClick={() => window.print()}
-              className="bg-primary text-on-primary px-6 py-2 font-semibold text-sm rounded shadow-sm hover:bg-opacity-95 transition-opacity"
+              className="bg-primary text-on-primary px-6 py-2 font-semibold text-sm rounded shadow-sm hover:bg-opacity-95 transition-opacity cursor-pointer"
             >
               Print / Export PDF
             </button>
@@ -116,172 +215,169 @@ export default function ReportDetailPage() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
               <div className="flex items-center gap-3 mb-2 text-xs font-semibold">
-                <span
-                  className={`px-3 py-1 rounded-sm uppercase tracking-wider font-extrabold border ${
-                    report.status === 'Reported'
-                      ? 'bg-surface-dim text-on-surface border-outline'
-                      : report.status === 'In Progress'
-                      ? 'bg-primary-container/20 text-primary border-primary/30'
-                      : 'bg-green-100 text-green-700 border-green-200'
-                  }`}
-                >
+                <span className={`px-3 py-1 rounded-sm uppercase tracking-wider font-extrabold border ${getStatusBadgeClass(report.status)}`}>
                   {report.status}
                 </span>
-                <span className="text-secondary font-medium">{report.date}</span>
+                <span className="text-secondary font-medium">
+                  {new Date(report.created_at).toLocaleString('id-ID')}
+                </span>
               </div>
-              <h2 className="text-3xl font-extrabold text-on-surface tracking-tight">
-                Report {report.id}: Severe {report.type}
+              <h2 className="text-3xl font-extrabold text-on-surface tracking-tight font-mono">
+                Report {report.id}: {getAiClassNames(report)}
               </h2>
             </div>
             
-            {/* Change Status Dropdown */}
-            <div className="relative inline-block">
+            <div className="flex items-center gap-3">
+              {/* Delete Button */}
               <button
-                onClick={() => setShowStatusMenu(!showStatusMenu)}
-                className="flex items-center gap-4 bg-inverse-surface text-inverse-on-surface px-6 py-4 rounded font-semibold text-sm min-w-[200px] justify-between transition-all hover:bg-opacity-90 active:scale-98"
-                id="statusDropdownBtn"
+                onClick={handleDeleteReport}
+                disabled={deleteLoading}
+                className="flex items-center gap-2 bg-error text-on-error border border-error px-5 py-3 rounded-lg font-bold text-sm hover:bg-opacity-90 active:scale-98 transition-all disabled:opacity-50 cursor-pointer"
               >
-                <span className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-lg leading-none">sync</span>
-                  Change Status
-                </span>
-                <span className="material-symbols-outlined leading-none">expand_more</span>
+                <span className="material-symbols-outlined text-lg leading-none">delete</span>
+                Hapus Laporan
               </button>
 
-              {showStatusMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowStatusMenu(false)}></div>
-                  <div
-                    className="absolute right-0 mt-2 w-full bg-surface-container-lowest border border-outline shadow-xl z-20 rounded overflow-hidden animate-fade-in-down"
-                    id="statusMenu"
-                  >
-                    <button
-                      onClick={() => handleStatusChange('Reported')}
-                      className="w-full text-left px-6 py-3.5 hover:bg-surface-container-low font-semibold text-sm text-on-surface flex items-center gap-3"
+              {/* Change Status Dropdown */}
+              <div className="relative inline-block">
+                <button
+                  onClick={() => setShowStatusMenu(!showStatusMenu)}
+                  className="flex items-center gap-4 bg-inverse-surface text-inverse-on-surface px-5 py-3 rounded-lg font-semibold text-sm min-w-[180px] justify-between transition-all hover:bg-opacity-90 active:scale-98 cursor-pointer"
+                  id="statusDropdownBtn"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-lg leading-none">sync</span>
+                    Ubah Status
+                  </span>
+                  <span className="material-symbols-outlined leading-none">expand_more</span>
+                </button>
+
+                {showStatusMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowStatusMenu(false)}></div>
+                    <div
+                      className="absolute right-0 mt-2 w-full bg-surface-container-lowest border border-outline shadow-xl z-25 rounded overflow-hidden animate-fade-in-down capitalize"
+                      id="statusMenu"
                     >
-                      <span className="w-2.5 h-2.5 rounded-full bg-secondary"></span> Reported
-                    </button>
-                    <button
-                      onClick={() => handleStatusChange('In Progress')}
-                      className="w-full text-left px-6 py-3.5 hover:bg-surface-container-low font-semibold text-sm text-on-surface flex items-center gap-3 border-t border-outline-variant"
-                    >
-                      <span className="w-2.5 h-2.5 rounded-full bg-primary"></span> In Progress
-                    </button>
-                    <button
-                      onClick={() => handleStatusChange('Resolved')}
-                      className="w-full text-left px-6 py-3.5 hover:bg-surface-container-low font-semibold text-sm text-on-surface flex items-center gap-3 border-t border-outline-variant"
-                    >
-                      <span className="w-2.5 h-2.5 rounded-full bg-green-500"></span> Resolved
-                    </button>
-                  </div>
-                </>
-              )}
+                      {(['pending', 'verified', 'in_progress', 'repaired', 'rejected'] as const).map((st) => (
+                        <button
+                          key={st}
+                          onClick={() => handleStatusChange(st)}
+                          className="w-full text-left px-5 py-3 hover:bg-surface-container-low font-semibold text-sm text-on-surface flex items-center gap-3 border-t border-outline-variant first:border-t-0"
+                        >
+                          <span className={`w-2.5 h-2.5 rounded-full ${
+                            st === 'pending'
+                              ? 'bg-secondary'
+                              : st === 'verified'
+                              ? 'bg-blue-500'
+                              : st === 'in_progress'
+                              ? 'bg-amber-500'
+                              : st === 'repaired'
+                              ? 'bg-green-500'
+                              : 'bg-red-500'
+                          }`}></span> {st.replace('_', ' ')}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Main Dashboard Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
-            {/* Left Column: Damage Evidence & Technical Specs */}
+            {/* Left Column: Damage Evidence & YOLOv8 Detections */}
             <div className="lg:col-span-8 space-y-gutter">
               {/* Damage Evidence Card */}
               <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm overflow-hidden transition-all duration-300">
                 <div className="p-6 border-b border-outline bg-surface-container-low">
                   <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary flex items-center gap-2">
                     <span className="material-symbols-outlined text-lg">photo_library</span>
-                    Damage Evidence
+                    Foto Bukti Kerusakan
                   </h3>
                 </div>
-                <div className="aspect-video w-full bg-surface-dim relative group cursor-zoom-in">
+                <div className="aspect-video w-full bg-surface-dim relative group">
                   <img
-                    className="w-full h-full object-cover grayscale-[10%] hover:grayscale-0 transition-all duration-500"
-                    src={report.imageUrl}
-                    alt={report.type}
+                    className="w-full h-full object-cover"
+                    src={report.image_url}
+                    alt={getAiClassNames(report)}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-6">
                     <p className="text-white text-xs font-semibold">
-                      Captured via RoadFix Mobile • {report.date}
+                      Diunggah via Web Portal • ID: {report.id}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Technical Details Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter">
-                <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm p-6 flex flex-col justify-between">
-                  <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary mb-6 flex items-center gap-2 border-b pb-2">
-                    <span className="material-symbols-outlined text-lg">engineering</span>
-                    Technical Specs
+              {/* Technical Details / AI Raw Response Accordion */}
+              <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm p-6 space-y-6">
+                <div>
+                  <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary flex items-center gap-2 border-b pb-2 mb-4">
+                    <span className="material-symbols-outlined text-lg">neurology</span>
+                    Analisis AI YOLOv8 Detections
                   </h3>
                   <div className="space-y-4">
-                    <div>
-                      <p className="text-secondary text-[11px] font-bold uppercase tracking-wider">Jenis Kerusakan</p>
-                      <p className="text-xl font-bold text-on-surface">{report.type}</p>
-                    </div>
-                    <div>
-                      <p className="text-secondary text-[11px] font-bold uppercase tracking-wider">Severity Level</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="flex gap-1">
-                          {[1, 2, 3, 4, 5].map((index) => (
-                            <span
-                              key={index}
-                              className={`w-6 h-2 rounded-full ${
-                                index <= severityBars ? 'bg-primary' : 'bg-outline-variant'
-                              }`}
-                            ></span>
-                          ))}
-                        </div>
-                        <span className="text-primary font-bold text-sm ml-1">{report.severity}</span>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-secondary text-[11px] font-bold uppercase tracking-wider">Hasil Klasifikasi AI</p>
+                        <p className="text-lg font-bold text-on-surface capitalize">{getAiClassNames(report)}</p>
+                      </div>
+                      <div>
+                        <p className="text-secondary text-[11px] font-bold uppercase tracking-wider">Tingkat Keyakinan (Confidence)</p>
+                        <p className="text-lg font-bold text-primary">
+                          {report.ai_confidence !== null ? `${(report.ai_confidence * 100).toFixed(0)}%` : 'N/A'}
+                        </p>
                       </div>
                     </div>
-                    <div>
-                      <p className="text-secondary text-[11px] font-bold uppercase tracking-wider">Estimated Size</p>
-                      <p className="text-sm font-semibold text-on-surface-variant">
-                        {report.estimatedSize || 'N/A'}
-                      </p>
+                    
+                    <div className="pt-2">
+                      <p className="text-secondary text-[11px] font-bold uppercase tracking-wider block mb-1.5">JSON Output AI YOLOv8</p>
+                      <pre className="bg-surface-container-low p-4 rounded-lg border border-outline-variant font-mono text-xs overflow-auto max-h-48 leading-normal text-on-surface">
+                        {JSON.stringify(report.ai_raw_response, null, 2)}
+                      </pre>
                     </div>
                   </div>
-                </div>
-
-                <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm p-6">
-                  <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary mb-4 flex items-center gap-2 border-b pb-2">
-                    <span className="material-symbols-outlined text-lg">location_on</span>
-                    Lokasi
-                  </h3>
-                  <div className="h-32 bg-surface-dim rounded-lg mb-4 overflow-hidden relative border border-outline-variant">
-                    <div
-                      className="w-full h-full bg-cover bg-center"
-                      style={{
-                        backgroundImage: `url('https://lh3.googleusercontent.com/aida-public/AB6AXuAXfWIdKQttCwfa0dnW5vbicWbXRhwRLGD9qO-tfiGK9mKIsmXCXpGlb7Dejf5tqkO5U_VEblZSGlFqQLbt26UFJobq-o1n6IogJz-nIQl4R8d90kInZr9SEI8nK16rriDtZX4d6t-lBwH0_yCGH-nPYGfr04KwUFAR91OFShFsaTaIR63KeMdhsNwB5xOF6bltvvzqFBFFO4fPEUWhUZw4D87-RgRxHpFRyZw12tXyL7QH-AFisF9ILYIKxFrgVJKlk2eXV79AgLtD')`,
-                      }}
-                    ></div>
-                    <div className="absolute inset-0 bg-primary/5 pointer-events-none"></div>
-                  </div>
-                  <p className="text-sm font-bold text-on-surface leading-tight">{report.location}</p>
-                  <p className="text-secondary text-xs mt-1 font-medium">
-                    Lat: {report.coordinates.lat.toFixed(4)}, Long: {report.coordinates.lng.toFixed(4)}
-                  </p>
                 </div>
               </div>
             </div>
 
-            {/* Right Column: Reporter Info & Activity */}
+            {/* Right Column: Location Map & Reporter Info */}
             <div className="lg:col-span-4 space-y-gutter">
+              {/* Map Lokasi Card */}
+              <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm p-6 space-y-4">
+                <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary flex items-center gap-2 border-b pb-2">
+                  <span className="material-symbols-outlined text-lg">location_on</span>
+                  Lokasi Kerusakan
+                </h3>
+                <div className="h-44 bg-surface-dim rounded-lg overflow-hidden relative border border-outline-variant">
+                  <div ref={mapContainerRef} className="w-full h-full z-10" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-on-surface leading-tight">{report.location_name}</p>
+                  <p className="text-secondary text-xs mt-1 font-mono">
+                    Lat: {report.latitude?.toFixed(6)}, Long: {report.longitude?.toFixed(6)}
+                  </p>
+                </div>
+              </div>
+
               {/* Reporter Identity Card */}
               <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6 border-b border-outline bg-surface-container-low">
                   <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary flex items-center gap-2">
                     <span className="material-symbols-outlined text-lg">person</span>
-                    Reporter Identity
+                    Informasi Pelapor
                   </h3>
                 </div>
                 <div className="p-6 space-y-6">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center text-on-primary-container font-extrabold text-lg border border-primary/20">
-                      {report.reporterName ? report.reporterName.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase() : 'GP'}
+                      {report.reporter_name ? report.reporter_name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase() : 'GP'}
                     </div>
                     <div>
                       <p className="text-[10px] text-secondary font-bold uppercase tracking-wider">Nama Pelapor</p>
-                      <p className="text-lg font-bold text-on-surface">{report.reporterName || 'Guest User'}</p>
+                      <p className="text-lg font-bold text-on-surface">{report.reporter_name || 'Guest User'}</p>
                     </div>
                   </div>
                   <div className="space-y-4 text-sm font-semibold">
@@ -289,80 +385,24 @@ export default function ReportDetailPage() {
                       <span className="material-symbols-outlined text-outline">mail</span>
                       <div>
                         <p className="text-[9px] text-secondary font-bold uppercase tracking-wider">Email</p>
-                        <p className="text-on-surface-variant font-normal text-xs">{report.reporterEmail || 'N/A'}</p>
+                        <p className="text-on-surface-variant font-normal text-xs">{report.reporter_email || 'N/A'}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="material-symbols-outlined text-outline">call</span>
                       <div>
                         <p className="text-[9px] text-secondary font-bold uppercase tracking-wider">No. HP</p>
-                        <p className="text-on-surface-variant font-normal text-xs">{report.reporterPhone || 'N/A'}</p>
+                        <p className="text-on-surface-variant font-normal text-xs">{report.reporter_phone || 'N/A'}</p>
                       </div>
                     </div>
                   </div>
                   <button 
-                    onClick={() => window.open(`mailto:${report.reporterEmail}`)}
-                    className="w-full py-3 border border-outline text-secondary font-bold text-sm rounded hover:bg-surface-container-low transition-colors outline-none"
+                    onClick={() => window.open(`mailto:${report.reporter_email}`)}
+                    className="w-full py-3 border border-outline text-secondary font-bold text-sm rounded hover:bg-surface-container-low transition-colors outline-none cursor-pointer"
                   >
                     Hubungi Pelapor
                   </button>
                 </div>
-              </div>
-
-              {/* Internal Notes */}
-              <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm p-6">
-                <h3 className="font-bold text-[14px] uppercase tracking-wider text-secondary mb-4 border-b pb-2">
-                  Catatan Admin
-                </h3>
-                
-                {/* Notes Feed */}
-                <div className="space-y-4 mb-6 max-h-[220px] overflow-y-auto pr-1">
-                  {report.adminNotes.length > 0 ? (
-                    report.adminNotes.map((note, index) => (
-                      <div
-                        key={index}
-                        className="p-3.5 bg-surface-container-low rounded border-l-4 border-primary text-sm shadow-sm"
-                      >
-                        <p className="text-on-surface italic leading-relaxed">"{note.text}"</p>
-                        <p className="text-[10px] text-secondary mt-2.5 font-bold uppercase tracking-tighter">
-                          {note.author} • {note.date}
-                        </p>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-xs text-secondary italic">Belum ada catatan internal.</p>
-                  )}
-                </div>
-
-                {/* Add Note Form */}
-                <form onSubmit={handleAddNote} className="space-y-3">
-                  <div className="flex justify-between items-center text-xs font-semibold text-secondary">
-                    <span>Penulis Catatan</span>
-                    <select
-                      value={noteAuthor}
-                      onChange={(e) => setNoteAuthor(e.target.value)}
-                      className="bg-transparent border-none py-0 focus:ring-0 cursor-pointer font-bold text-primary text-xs"
-                    >
-                      <option value="Admin Siti">Admin Siti</option>
-                      <option value="John Doe">John Doe</option>
-                      <option value="Chief Engineer">Chief Engineer</option>
-                    </select>
-                  </div>
-                  <textarea
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    className="w-full bg-background border border-outline rounded-lg p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
-                    placeholder="Tambahkan catatan internal..."
-                    rows={3}
-                    required
-                  ></textarea>
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 bg-inverse-surface text-inverse-on-surface font-semibold text-sm rounded hover:opacity-90 active:scale-98 transition-all"
-                  >
-                    Simpan Catatan
-                  </button>
-                </form>
               </div>
             </div>
           </div>

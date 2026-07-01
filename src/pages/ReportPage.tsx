@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { addReport } from '../reportsState';
 import exifr from 'exifr';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -11,23 +10,22 @@ export default function ReportPage() {
   const [step, setStep] = useState(1);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Form states
+  // Form and image states
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string>('https://lh3.googleusercontent.com/aida-public/AB6AXuAdk8muXetlKpJm7CFnWrI2ydO0-gNjUGVgIWem3EOe4F_GeV0qZgK4J4FIOHT-ET4mrmlcScJOp1jnUmJ42iPhjSzhC1ZtFz8HFuWZ97kMSZIP8c-XL29T2TmcGCKXLNNIcI9ApD06mb6apa7apSgfdbE5-xDcnlM9ekNT7Cgh2rtzhpdvW9TG5e-MQFX9o_4vjYZbJJfk-EfZGUw0gNykr0IQmfuaS1MPuinPWGFC_MGM5BDZzxwkdX9dfF6j7GUMC9ez0R9ay-mr');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [locationName, setLocationName] = useState('Jl. Sudirman No. 45, Jakarta Selatan');
   const [coordinates, setCoordinates] = useState({ lat: -6.2088, lng: 106.8456 });
-  const [notes, setNotes] = useState('');
-  const [damageType, setDamageType] = useState<'Pothole' | 'Crack' | 'Manhole'>('Pothole');
-  const [severity, setSeverity] = useState<'Low' | 'Medium' | 'High'>('High');
 
-  // AI loading and alerts state
+  // API submission results and loading states
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiProgress, setAiProgress] = useState(0);
   const [aiTask, setAiTask] = useState('Menganalisis foto jalan rusak...');
-  const [submittedId, setSubmittedId] = useState('');
+  const [submittedReport, setSubmittedReport] = useState<any>(null);
   const [locationAlert, setLocationAlert] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Refs for maps
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -74,7 +72,6 @@ export default function ReportPage() {
         });
         await reverseGeocode(latitude, longitude);
       } else {
-        // Fallback to browser geolocation or default
         setLocationAlert({
           type: 'info',
           message: 'Foto tidak memiliki metadata lokasi. Silakan tentukan lokasi Anda pada peta.'
@@ -87,7 +84,6 @@ export default function ReportPage() {
               await reverseGeocode(latitude, longitude);
             },
             async () => {
-              // Denied or failed, reverse geocode current default coordinates
               await reverseGeocode(coordinates.lat, coordinates.lng);
             }
           );
@@ -109,6 +105,7 @@ export default function ReportPage() {
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setImageUrl(reader.result as string);
@@ -128,6 +125,7 @@ export default function ReportPage() {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (file) {
+      setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
         setImageUrl(reader.result as string);
@@ -203,7 +201,7 @@ export default function ReportPage() {
 
   // Leaflet Map Initialization for Step 3 (Read-only display)
   useEffect(() => {
-    if (step === 3 && !isAiLoading && step3MapContainerRef.current) {
+    if (step === 3 && !isAiLoading && submittedReport && step3MapContainerRef.current) {
       if (!step3MapRef.current) {
         step3MapRef.current = L.map(step3MapContainerRef.current, {
           zoomControl: false,
@@ -213,7 +211,7 @@ export default function ReportPage() {
           scrollWheelZoom: false,
           boxZoom: false,
           keyboard: false
-        }).setView([coordinates.lat, coordinates.lng], 15);
+        }).setView([submittedReport.latitude || coordinates.lat, submittedReport.longitude || coordinates.lng], 15);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -229,11 +227,11 @@ export default function ReportPage() {
           iconAnchor: [20, 40]
         });
 
-        L.marker([coordinates.lat, coordinates.lng], {
+        L.marker([submittedReport.latitude || coordinates.lat, submittedReport.longitude || coordinates.lng], {
           icon: markerIcon
         }).addTo(step3MapRef.current);
       } else {
-        step3MapRef.current.setView([coordinates.lat, coordinates.lng], 15);
+        step3MapRef.current.setView([submittedReport.latitude || coordinates.lat, submittedReport.longitude || coordinates.lng], 15);
         setTimeout(() => {
           step3MapRef.current?.invalidateSize();
         }, 100);
@@ -246,72 +244,86 @@ export default function ReportPage() {
         step3MapRef.current = null;
       }
     };
-  }, [step, isAiLoading]);
+  }, [step, isAiLoading, submittedReport]);
 
-  // Submit trigger (handles progress loading state before going to step 3 final result view)
-  const handleSubmitReport = () => {
+  // Submit trigger to backend `/api/reports`
+  const handleSubmitReport = async () => {
     if (!fullName || !email || !phone) {
       alert('Silakan lengkapi identitas Anda sebelum mengirim laporan.');
+      return;
+    }
+    if (!imageFile) {
+      alert('Silakan pilih atau unggah foto terlebih dahulu.');
+      setStep(1);
       return;
     }
 
     setStep(3);
     setIsAiLoading(true);
     setAiProgress(0);
-    setAiTask('Menganalisis foto jalan rusak...');
+    setAiTask('Mengirim data laporan ke server...');
+    setSubmitError(null);
 
+    // AI loader progress interval simulation
     const interval = setInterval(() => {
       setAiProgress((prev) => {
-        const next = prev + 5;
-        if (next === 30) setAiTask('Mengklasifikasi jenis kerusakan...');
-        if (next === 60) setAiTask('Memvalidasi lokasi koordinat...');
-        if (next === 85) setAiTask('Menyimpan laporan ke database...');
-        if (next >= 100) {
-          clearInterval(interval);
-          setTimeout(() => {
-            // Save the report in the application state
-            const reportData = {
-              type: damageType,
-              location: locationName,
-              coordinates: coordinates,
-              status: 'Reported' as const,
-              reporterName: fullName,
-              reporterEmail: email,
-              reporterPhone: phone,
-              notes: notes,
-              imageUrl: imageUrl,
-              severity: severity,
-              estimatedSize: damageType === 'Pothole'
-                ? '~45cm Diameter • 12cm Depth'
-                : damageType === 'Crack'
-                  ? '~120cm Length • 2cm Width'
-                  : '~60cm Diameter'
-            };
-
-            const newReport = addReport(reportData);
-            setSubmittedId(newReport.id);
-            setIsAiLoading(false);
-          }, 600);
-          return 100;
-        }
-        return next;
+        if (prev < 90) return prev + 10;
+        return prev;
       });
-    }, 100);
+    }, 150);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', imageFile);
+      formData.append('location_name', locationName);
+      formData.append('latitude', String(coordinates.lat));
+      formData.append('longitude', String(coordinates.lng));
+      formData.append('reporter_name', fullName);
+      formData.append('reporter_email', email);
+      formData.append('reporter_phone', phone);
+
+      const response = await fetch('https://backend-apdd.razik.workers.dev/api/reports', {
+        method: 'POST',
+        body: formData
+      });
+
+      const resJson = await response.json();
+      clearInterval(interval);
+      setAiProgress(100);
+
+      if (response.status === 201 && resJson.status === 'success') {
+        setSubmittedReport(resJson.data);
+        setIsAiLoading(false);
+      } else if (response.status === 409) {
+        setSubmitError(resJson.message || 'Laporan konflik. Area lokasi jalan rusak ini sudah dilaporkan oleh orang lain dalam radius 50 meter.');
+        setIsAiLoading(false);
+      } else if (response.status === 422) {
+        setSubmitError(resJson.message || 'Model AI YOLOv8 tidak mendeteksi adanya kerusakan jalan pada foto tersebut. Harap unggah foto lain.');
+        setIsAiLoading(false);
+      } else {
+        setSubmitError(resJson.message || 'Terjadi kesalahan sistem saat mengirim laporan.');
+        setIsAiLoading(false);
+      }
+    } catch (error) {
+      console.error('Error submitting report:', error);
+      clearInterval(interval);
+      setSubmitError('Gagal mengirim data. Silakan periksa koneksi internet Anda dan coba lagi.');
+      setIsAiLoading(false);
+    }
   };
 
   const handleReset = () => {
     setStep(1);
+    setImageFile(null);
     setImageUrl('https://lh3.googleusercontent.com/aida-public/AB6AXuAdk8muXetlKpJm7CFnWrI2ydO0-gNjUGVgIWem3EOe4F_GeV0qZgK4J4FIOHT-ET4mrmlcScJOp1jnUmJ42iPhjSzhC1ZtFz8HFuWZ97kMSZIP8c-XL29T2TmcGCKXLNNIcI9ApD06mb6apa7apSgfdbE5-xDcnlM9ekNT7Cgh2rtzhpdvW9TG5e-MQFX9o_4vjYZbJJfk-EfZGUw0gNykr0IQmfuaS1MPuinPWGFC_MGM5BDZzxwkdX9dfF6j7GUMC9ez0R9ay-mr');
     setFullName('');
     setEmail('');
     setPhone('');
     setLocationName('Jl. Sudirman No. 45, Jakarta Selatan');
     setCoordinates({ lat: -6.2088, lng: 106.8456 });
-    setNotes('');
-    setDamageType('Pothole');
-    setSeverity('High');
-    setSubmittedId('');
+    setSubmittedReport(null);
     setLocationAlert(null);
+    setSubmitError(null);
   };
 
   const updateMapLocation = async (lat: number, lng: number) => {
@@ -325,13 +337,23 @@ export default function ReportPage() {
     await reverseGeocode(lat, lng);
   };
 
+  // Helper to extract AI detections class names from YOLOv8 raw response
+  const getAiClassNames = (report: any) => {
+    if (report && report.ai_raw_response && Array.isArray(report.ai_raw_response) && report.ai_raw_response.length > 0) {
+      const classes = report.ai_raw_response.map((det: any) => det.class);
+      // Remove duplicates
+      return Array.from(new Set(classes)).join(', ');
+    }
+    return 'Road Damage (General)';
+  };
+
   return (
     <div className="bg-surface font-body-md text-on-surface min-h-screen flex flex-col">
       {/* TopNavBar */}
       <header className="bg-surface border-b border-outline-variant w-full h-16 sticky top-0 z-50">
         <div className="flex justify-between items-center px-margin-desktop max-w-max-width mx-auto h-full">
           <Link to="/" className="text-2xl font-bold text-primary tracking-tight">
-            RoadFix AI
+            BROS
           </Link>
           <nav className="hidden md:flex gap-gutter items-center">
             <Link to="/" className="font-semibold text-secondary hover:text-primary transition-colors duration-200">
@@ -343,7 +365,7 @@ export default function ReportPage() {
           </nav>
           <button
             onClick={() => navigate(isAdmin ? '/admin/dashboard' : '/login')}
-            className="bg-primary text-on-primary font-semibold text-[14px] px-6 py-2 rounded transition-colors hover:bg-opacity-90"
+            className="bg-primary text-on-primary font-semibold text-[14px] px-6 py-2 rounded transition-colors hover:bg-opacity-90 cursor-pointer"
           >
             {isAdmin ? 'Dashboard' : 'Sign In'}
           </button>
@@ -380,10 +402,10 @@ export default function ReportPage() {
               <div className="relative z-10 flex flex-col items-center gap-2">
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${step > 2
-                    ? 'bg-primary text-white'
-                    : step === 2
                       ? 'bg-primary text-white'
-                      : 'bg-surface-container-high text-secondary border border-outline-variant'
+                      : step === 2
+                        ? 'bg-primary text-white'
+                        : 'bg-surface-container-high text-secondary border border-outline-variant'
                     }`}
                 >
                   {step > 2 ? <span className="material-symbols-outlined text-sm font-bold">check</span> : '2'}
@@ -397,8 +419,8 @@ export default function ReportPage() {
               <div className="relative z-10 flex flex-col items-center gap-2">
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${step === 3
-                    ? 'bg-primary text-white shadow-sm'
-                    : 'bg-surface-container-high text-secondary border border-outline-variant'
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'bg-surface-container-high text-secondary border border-outline-variant'
                     }`}
                 >
                   3
@@ -430,11 +452,11 @@ export default function ReportPage() {
                     onChange={handleImageChange}
                     className="hidden"
                   />
-                  <span className="material-symbols-outlined text-5xl text-outline mb-4 group-hover:text-primary transition-colors duration-200">
+                  <span className="material-symbols-outlined text-5xl text-outline mb-4 group-hover:text-primary transition-colors duration-200 select-none">
                     add_a_photo
                   </span>
                   <p className="font-semibold text-[14px] text-on-surface-variant">Seret dan letakkan atau klik untuk upload</p>
-                  <p className="text-[12px] text-secondary mt-1">Mendukung JPG, PNG (Maks 10MB)</p>
+                  <p className="text-[12px] text-secondary mt-1">Mendukung JPG, PNG (Maks 5MB)</p>
                 </label>
               </div>
             )}
@@ -442,17 +464,22 @@ export default function ReportPage() {
             {step === 2 && (
               /* Step 2: Location & Identity Details + Submit */
               <div className="flex-grow flex flex-col">
-                <div className="mb-6">
-                  <h2 className="text-2xl font-bold mb-2">Tentukan Lokasi &amp; Identitas</h2>
-                  <p className="text-secondary text-sm">Lengkapi detail identitas pelapor, verifikasi jenis kerusakan, dan tentukan lokasi koordinat jalan rusak.</p>
+                <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold mb-2">Tentukan Lokasi &amp; Identitas</h2>
+                    <p className="text-secondary text-sm">Lengkapi detail identitas pelapor dan tentukan lokasi koordinat jalan rusak pada peta.</p>
+                  </div>
+                  <div className="w-20 h-16 rounded border border-outline-variant overflow-hidden flex-shrink-0 shadow-sm self-start sm:self-center">
+                    <img className="w-full h-full object-cover" src={imageUrl} alt="Local Preview" />
+                  </div>
                 </div>
 
                 <div className="space-y-6 flex-grow">
                   {/* Location Alert */}
                   {locationAlert && (
                     <div className={`p-4 rounded-lg flex items-center gap-3 border text-sm font-semibold ${locationAlert.type === 'success'
-                      ? 'bg-green-50 text-green-700 border-green-200'
-                      : 'bg-primary-container/10 text-primary border-primary/20'
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : 'bg-primary-container/10 text-primary border-primary/20'
                       }`}>
                       <span className="material-symbols-outlined select-none">
                         {locationAlert.type === 'success' ? 'check_circle' : 'info'}
@@ -474,7 +501,7 @@ export default function ReportPage() {
                           required
                           value={fullName}
                           onChange={(e) => setFullName(e.target.value)}
-                          className="w-full p-3 bg-surface-container-low border border-outline focus:border-primary rounded-lg font-body-md transition-colors outline-none"
+                          className="w-full p-3 bg-surface-container-low border border-outline focus:border-primary rounded-lg font-body-md transition-colors outline-none text-sm text-on-surface"
                           placeholder="Masukkan nama lengkap"
                         />
                       </div>
@@ -485,7 +512,7 @@ export default function ReportPage() {
                           required
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          className="w-full p-3 bg-surface-container-low border border-outline focus:border-primary rounded-lg font-body-md transition-colors outline-none"
+                          className="w-full p-3 bg-surface-container-low border border-outline focus:border-primary rounded-lg font-body-md transition-colors outline-none text-sm text-on-surface"
                           placeholder="contoh@email.com"
                         />
                       </div>
@@ -496,86 +523,14 @@ export default function ReportPage() {
                           required
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
-                          className="w-full p-3 bg-surface-container-low border border-outline focus:border-primary rounded-lg font-body-md transition-colors outline-none"
+                          className="w-full p-3 bg-surface-container-low border border-outline focus:border-primary rounded-lg font-body-md transition-colors outline-none text-sm text-on-surface"
                           placeholder="0812..."
                         />
                       </div>
                     </div>
                   </div>
 
-                  {/* 2. Detail Kerusakan */}
-                  {/* <div className="space-y-4">
-                    <h3 className="font-bold text-[14px] text-secondary uppercase tracking-wider border-b pb-2">
-                      Detail Kerusakan Jalan
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-[12px] font-semibold text-on-surface-variant uppercase tracking-wider block">
-                          Jenis Kerusakan (Klasifikasi)
-                        </label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {(['Pothole', 'Crack', 'Manhole'] as const).map((type) => (
-                            <button
-                              key={type}
-                              type="button"
-                              onClick={() => {
-                                setDamageType(type);
-                                if (type === 'Pothole') setSeverity('High');
-                                else if (type === 'Crack') setSeverity('Low');
-                                else setSeverity('Medium');
-                              }}
-                              className={`py-3 px-2 rounded-lg border text-center font-bold text-[12px] transition-all cursor-pointer ${
-                                damageType === type
-                                  ? 'border-primary border-2 bg-primary/5 text-primary'
-                                  : 'border-outline-variant text-secondary hover:bg-surface-container-low'
-                              }`}
-                            >
-                              {type}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[12px] font-semibold text-on-surface-variant uppercase tracking-wider block">
-                          Tingkat Keparahan
-                        </label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {(['Low', 'Medium', 'High'] as const).map((sev) => (
-                            <button
-                              key={sev}
-                              type="button"
-                              onClick={() => setSeverity(sev)}
-                              className={`py-3 px-2 rounded-lg border text-center font-bold text-[12px] transition-all cursor-pointer ${
-                                severity === sev
-                                  ? sev === 'High'
-                                    ? 'border-red-600 border-2 bg-red-50 text-red-700'
-                                    : sev === 'Medium'
-                                    ? 'border-amber-500 border-2 bg-amber-50 text-amber-700'
-                                    : 'border-emerald-500 border-2 bg-emerald-50 text-emerald-700'
-                                  : 'border-outline-variant text-secondary hover:bg-surface-container-low'
-                              }`}
-                            >
-                              {sev}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-2 md:col-span-2">
-                        <label className="text-[12px] font-semibold text-on-surface-variant">Catatan Tambahan (Opsional)</label>
-                        <textarea
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          rows={2}
-                          className="w-full bg-surface-container-low border border-outline rounded-lg p-3 text-sm focus:border-primary focus:bg-white outline-none transition-all"
-                          placeholder="Tambahkan informasi pelengkap seperti ukuran lubang, patokan terdekat, dsb."
-                        ></textarea>
-                      </div>
-                    </div>
-                  </div> */}
-
-                  {/* 3. Pemetaan Lokasi (OSM) */}
+                  {/* 2. Pemetaan Lokasi (OSM) */}
                   <div className="space-y-4">
                     <h3 className="font-bold text-[14px] text-secondary uppercase tracking-wider border-b pb-2">
                       Pemetaan Lokasi
@@ -627,16 +582,16 @@ export default function ReportPage() {
                   <button
                     type="button"
                     onClick={() => setStep(1)}
-                    className="flex-1 border border-outline text-secondary font-semibold py-4 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer text-center"
+                    className="flex-1 border border-outline text-secondary font-semibold py-4 rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer text-center text-sm"
                   >
                     Kembali
                   </button>
                   <button
                     type="button"
                     onClick={handleSubmitReport}
-                    className="flex-[2] bg-primary text-on-primary font-bold py-4 rounded-lg hover:bg-opacity-95 shadow-lg shadow-primary/10 transition-all flex items-center justify-center gap-2 cursor-pointer text-center"
+                    className="flex-[2] bg-primary text-on-primary font-bold py-4 rounded-lg hover:bg-opacity-95 shadow-lg shadow-primary/10 transition-all flex items-center justify-center gap-2 cursor-pointer text-center text-sm"
                   >
-                    <span className="material-symbols-outlined">send</span>
+                    <span className="material-symbols-outlined text-lg leading-none">send</span>
                     Kirim Laporan
                   </button>
                 </div>
@@ -649,13 +604,10 @@ export default function ReportPage() {
                 <div className="w-full max-w-md space-y-8 text-center">
                   <div className="relative w-24 h-24 mx-auto mb-6 flex items-center justify-center">
                     <CgSpinner className="animate-spin text-primary text-6xl" />
-                    <span className="material-symbols-outlined absolute inset-0 flex items-center justify-center text-primary text-2xl select-none">
-                      neurology
-                    </span>
                   </div>
                   <div>
                     <h2 className="text-2xl font-bold mb-2 text-on-surface">Analisis AI &amp; Pengiriman Laporan</h2>
-                    <p className="text-secondary text-sm">Sistem sedang mendeteksi visual kerusakan dan mendaftarkan laporan koordinat...</p>
+                    <p className="text-secondary text-sm">Sistem sedang mendeteksi visual kerusakan menggunakan YOLOv8 dan mendaftarkan laporan koordinat...</p>
                   </div>
                   <div className="w-full bg-surface-container-high h-2 rounded-full overflow-hidden">
                     <div className="h-full bg-primary transition-all duration-300" style={{ width: `${aiProgress}%` }}></div>
@@ -668,7 +620,34 @@ export default function ReportPage() {
               </div>
             )}
 
-            {step === 3 && !isAiLoading && (
+            {step === 3 && !isAiLoading && submitError && (
+              /* Step 3: Submission Failed (YOLOv8 check failed or Duplicate location 409) */
+              <div className="flex-grow flex flex-col items-center justify-center py-12 animate-fade-in text-center">
+                <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-6">
+                  <span className="material-symbols-outlined text-4xl select-none">error</span>
+                </div>
+                <h2 className="text-2xl font-extrabold text-red-800 mb-2">Pengiriman Laporan Gagal</h2>
+                <p className="text-secondary text-sm max-w-md mb-8 font-medium">
+                  {submitError}
+                </p>
+                <div className="flex gap-4 w-full max-w-sm">
+                  <button
+                    onClick={() => setStep(2)}
+                    className="flex-1 py-3 border border-outline text-secondary font-semibold rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer text-sm"
+                  >
+                    Koreksi Data / Foto
+                  </button>
+                  <button
+                    onClick={handleReset}
+                    className="flex-1 bg-primary text-on-primary font-semibold py-3 rounded-lg hover:bg-opacity-90 transition-opacity cursor-pointer text-sm"
+                  >
+                    Upload Foto Baru
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {step === 3 && !isAiLoading && !submitError && submittedReport && (
               /* Step 3: Final Display-only Submission Results */
               <div className="flex-grow flex flex-col space-y-8 animate-fade-in">
                 {/* Success Banner */}
@@ -681,7 +660,7 @@ export default function ReportPage() {
                     Terima kasih atas laporan Anda. Laporan kerusakan telah tercatat di database BROS dengan ID pelacakan:
                   </p>
                   <div className="bg-white border border-green-300 text-green-800 font-mono text-xl font-bold px-6 py-2 rounded-lg tracking-wider shadow-sm select-all">
-                    {submittedId}
+                    {submittedReport.id}
                   </div>
                 </div>
 
@@ -695,55 +674,33 @@ export default function ReportPage() {
                         <img
                           alt="Uploaded road damage"
                           className="w-full h-full object-cover"
-                          src={imageUrl}
+                          src={submittedReport.image_url}
                         />
                       </div>
                     </div>
 
                     <div className="bg-surface-container-low p-5 rounded-xl border border-outline space-y-4">
                       <div>
-                        <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-1">Klasifikasi Kerusakan (AI)</span>
+                        <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-1">Klasifikasi Kerusakan (AI YOLOv8)</span>
                         <div className="flex items-center gap-2">
                           <span className="material-symbols-outlined text-primary font-bold select-none">warning</span>
-                          <span className="text-lg font-bold text-on-surface">{damageType}</span>
-                          {/* <span className="bg-primary/10 text-primary text-[9px] px-2 py-0.5 rounded-full font-bold ml-auto select-none border border-primary/20">
-                            98% CONFIDENCE
-                          </span> */}
+                          <span className="text-lg font-bold text-on-surface capitalize">
+                            {getAiClassNames(submittedReport)}
+                          </span>
+                          {submittedReport.ai_confidence !== null && (
+                            <span className="bg-primary/10 text-primary text-[9px] px-2 py-0.5 rounded-full font-bold ml-auto select-none border border-primary/20">
+                              {(submittedReport.ai_confidence * 100).toFixed(0)}% CONFIDENCE
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      {/* <div className="grid grid-cols-2 gap-4 pt-2 border-t border-outline-variant/60">
-                        <div>
-                          <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-0.5">Tingkat Keparahan</span>
-                          <span className={`inline-block text-xs font-bold px-2.5 py-1 rounded border uppercase tracking-wider ${severity === 'High'
-                              ? 'bg-red-50 text-red-700 border-red-200'
-                              : severity === 'Medium'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            }`}>
-                            {severity}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-0.5">Estimasi Dimensi</span>
-                          <span className="text-xs font-semibold text-on-surface block mt-1">
-                            {damageType === 'Pothole'
-                              ? '~45cm Dia. • 12cm Dpth'
-                              : damageType === 'Crack'
-                                ? '~120cm Lng. • 2cm Wdth'
-                                : '~60cm Dia.'}
-                          </span>
-                        </div>
-                      </div> */}
-
-                      {notes && (
-                        <div className="pt-3 border-t border-outline-variant/60">
-                          <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-1">Catatan Pelapor</span>
-                          <p className="text-xs text-on-surface-variant bg-white p-3 rounded-lg border border-outline-variant/40 italic">
-                            "{notes}"
-                          </p>
-                        </div>
-                      )}
+                      <div className="pt-2 border-t border-outline-variant/60">
+                        <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-1">Status Laporan</span>
+                        <span className="inline-block text-xs font-bold px-2.5 py-1 rounded border uppercase tracking-wider bg-surface-dim text-on-surface border-outline">
+                          {submittedReport.status}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -760,19 +717,19 @@ export default function ReportPage() {
                       <div>
                         <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-0.5">Alamat Terdeteksi</span>
                         <p className="text-sm font-semibold text-on-surface leading-tight">
-                          {locationName}
+                          {submittedReport.location_name}
                         </p>
                       </div>
                       <div>
                         <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-0.5">Koordinat GPS</span>
                         <p className="text-xs font-mono text-secondary">
-                          Lat: {coordinates.lat.toFixed(6)}, Long: {coordinates.lng.toFixed(6)}
+                          Lat: {submittedReport.latitude?.toFixed(6)}, Long: {submittedReport.longitude?.toFixed(6)}
                         </p>
                       </div>
                       <div className="pt-2 border-t border-outline-variant/60">
                         <span className="text-[10px] text-secondary uppercase font-bold tracking-wider block mb-0.5">Identitas Pengirim</span>
                         <p className="text-xs text-on-surface font-semibold">
-                          {fullName} ({email} • {phone})
+                          {submittedReport.reporter_name} ({submittedReport.reporter_email} • {submittedReport.reporter_phone})
                         </p>
                       </div>
                     </div>
@@ -783,13 +740,13 @@ export default function ReportPage() {
                 <div className="flex gap-4 pt-4 border-t border-outline-variant">
                   <button
                     onClick={handleReset}
-                    className="flex-1 py-3.5 border border-outline text-secondary font-semibold rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer text-center font-bold"
+                    className="flex-1 py-3.5 border border-outline text-secondary font-semibold rounded-lg hover:bg-surface-container-high transition-colors cursor-pointer text-center font-bold text-sm"
                   >
                     Buat Laporan Baru
                   </button>
                   <button
                     onClick={() => navigate('/')}
-                    className="flex-1 bg-primary text-on-primary font-semibold py-3.5 rounded-lg hover:bg-opacity-90 transition-opacity shadow-md cursor-pointer text-center font-bold"
+                    className="flex-1 bg-primary text-on-primary font-semibold py-3.5 rounded-lg hover:bg-opacity-90 transition-opacity shadow-md cursor-pointer text-center font-bold text-sm"
                   >
                     Kembali ke Home
                   </button>
