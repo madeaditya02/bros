@@ -26,6 +26,7 @@ export default function ReportDetailPage() {
     setError(null);
     try {
       const data = await getAdminReportById(id);
+      console.log('Berhasil')
       setReport(data);
     } catch (err) {
       console.error('Error fetching report:', err);
@@ -198,7 +199,7 @@ export default function ReportDetailPage() {
               <span className="material-symbols-outlined">notifications</span>
             </button>
             <div className="h-8 w-[1px] bg-outline-variant"></div>
-            <button 
+            <button
               onClick={() => window.print()}
               className="bg-primary text-on-primary px-6 py-2 font-semibold text-sm rounded shadow-sm hover:bg-opacity-95 transition-opacity cursor-pointer"
             >
@@ -226,7 +227,7 @@ export default function ReportDetailPage() {
                 Report {report.id}: {getAiClassNames(report)}
               </h2>
             </div>
-            
+
             <div className="flex items-center gap-3">
               {/* Delete Button */}
               <button
@@ -265,17 +266,16 @@ export default function ReportDetailPage() {
                           onClick={() => handleStatusChange(st)}
                           className="w-full text-left px-5 py-3 hover:bg-surface-container-low font-semibold text-sm text-on-surface flex items-center gap-3 border-t border-outline-variant first:border-t-0"
                         >
-                          <span className={`w-2.5 h-2.5 rounded-full ${
-                            st === 'pending'
-                              ? 'bg-secondary'
-                              : st === 'verified'
+                          <span className={`w-2.5 h-2.5 rounded-full ${st === 'pending'
+                            ? 'bg-secondary'
+                            : st === 'verified'
                               ? 'bg-blue-500'
                               : st === 'in_progress'
-                              ? 'bg-amber-500'
-                              : st === 'repaired'
-                              ? 'bg-green-500'
-                              : 'bg-red-500'
-                          }`}></span> {st.replace('_', ' ')}
+                                ? 'bg-amber-500'
+                                : st === 'repaired'
+                                  ? 'bg-green-500'
+                                  : 'bg-red-500'
+                            }`}></span> {st.replace('_', ' ')}
                         </button>
                       ))}
                     </div>
@@ -331,7 +331,7 @@ export default function ReportDetailPage() {
                         </p>
                       </div>
                     </div>
-                    
+
                     <div className="pt-2">
                       <p className="text-secondary text-[11px] font-bold uppercase tracking-wider block mb-1.5">JSON Output AI YOLOv8</p>
                       <pre className="bg-surface-container-low p-4 rounded-lg border border-outline-variant font-mono text-xs overflow-auto max-h-48 leading-normal text-on-surface">
@@ -396,7 +396,7 @@ export default function ReportDetailPage() {
                       </div>
                     </div>
                   </div>
-                  <button 
+                  <button
                     onClick={() => window.open(`mailto:${report.reporter_email}`)}
                     className="w-full py-3 border border-outline text-secondary font-bold text-sm rounded hover:bg-surface-container-low transition-colors outline-none cursor-pointer"
                   >
