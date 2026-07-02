@@ -60,8 +60,8 @@ export default function ReportsManagementPage() {
     if (window.confirm(`Apakah Anda yakin ingin menghapus laporan ${id} dari sistem?`)) {
       try {
         await deleteReport(id);
+        setReports((currentReports) => currentReports.filter((report) => report.id !== id));
         alert(`Laporan ${id} berhasil dihapus.`);
-        loadData();
       } catch (err) {
         console.error('Delete error:', err);
         alert('Gagal menghapus laporan.');

@@ -184,7 +184,7 @@ export default function ReportDetailPage() {
       {/* Main Content Area */}
       <main className="flex-grow pl-64 min-h-screen flex flex-col min-w-0">
         {/* Header / Top Bar */}
-        <header className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-margin-desktop sticky top-0 z-10">
+        <header className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-margin-desktop sticky top-0 z-60">
           <div className="flex items-center gap-4">
             <nav className="flex items-center text-secondary font-semibold text-sm">
               <Link to="/admin/reports" className="hover:text-primary transition-colors">
@@ -195,7 +195,7 @@ export default function ReportDetailPage() {
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <button className="p-2 text-secondary hover:bg-surface-container-low rounded-full select-none">
+            {/* <button className="p-2 text-secondary hover:bg-surface-container-low rounded-full select-none">
               <span className="material-symbols-outlined">notifications</span>
             </button>
             <div className="h-8 w-[1px] bg-outline-variant"></div>
@@ -205,7 +205,7 @@ export default function ReportDetailPage() {
             >
               Print / Export PDF
             </button>
-            <div className="h-8 w-[1px] bg-outline-variant"></div>
+            <div className="h-8 w-[1px] bg-outline-variant"></div> */}
             <AdminHeaderProfile />
           </div>
         </header>

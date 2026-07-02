@@ -139,65 +139,79 @@ export default function ReportPage() {
 
   // Leaflet Map Initialization for Step 2
   useEffect(() => {
-    if (step === 2 && mapContainerRef.current) {
-      if (!mapRef.current) {
-        mapRef.current = L.map(mapContainerRef.current).setView([coordinates.lat, coordinates.lng], 15);
+    if (step !== 2) {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        markerRef.current = null;
+      }
+      return;
+    }
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        }).addTo(mapRef.current);
+    if (!mapContainerRef.current) {
+      return;
+    }
 
-        const markerIcon = L.divIcon({
-          html: `<div class="relative flex items-center justify-center" style="width: 40px; height: 40px;">
+    if (!mapRef.current) {
+      mapRef.current = L.map(mapContainerRef.current).setView([coordinates.lat, coordinates.lng], 15);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(mapRef.current);
+
+      const markerIcon = L.divIcon({
+        html: `<div class="relative flex items-center justify-center" style="width: 40px; height: 40px;">
                    <span class="material-symbols-outlined text-primary text-5xl select-none" style="font-variation-settings: 'FILL' 1; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); transform: translateY(-16px); position: absolute;">location_on</span>
                    <div class="absolute w-4 h-1 bg-black/20 rounded-full blur-[1px]" style="bottom: 0px;"></div>
                  </div>`,
-          className: 'custom-map-pin',
-          iconSize: [40, 40],
-          iconAnchor: [20, 40]
-        });
+        className: 'custom-map-pin',
+        iconSize: [40, 40],
+        iconAnchor: [20, 40]
+      });
 
-        markerRef.current = L.marker([coordinates.lat, coordinates.lng], {
-          icon: markerIcon,
-          draggable: true
-        }).addTo(mapRef.current);
+      markerRef.current = L.marker([coordinates.lat, coordinates.lng], {
+        icon: markerIcon,
+        draggable: true
+      }).addTo(mapRef.current);
 
-        // Marker drag handler
-        markerRef.current.on('dragend', async (e) => {
-          const marker = e.target;
-          const position = marker.getLatLng();
-          setCoordinates({ lat: position.lat, lng: position.lng });
-          await reverseGeocode(position.lat, position.lng);
-        });
+      // Marker drag handler
+      markerRef.current.on('dragend', async (e) => {
+        const marker = e.target;
+        const position = marker.getLatLng();
+        setCoordinates({ lat: position.lat, lng: position.lng });
+        await reverseGeocode(position.lat, position.lng);
+      });
 
-        // Map click handler
-        mapRef.current.on('click', async (e) => {
-          const { lat, lng } = e.latlng;
-          setCoordinates({ lat, lng });
-          if (markerRef.current) {
-            markerRef.current.setLatLng([lat, lng]);
-          }
-          await reverseGeocode(lat, lng);
-        });
-      } else {
-        mapRef.current.setView([coordinates.lat, coordinates.lng], 15);
+      // Map click handler
+      mapRef.current.on('click', async (e) => {
+        const { lat, lng } = e.latlng;
+        setCoordinates({ lat, lng });
         if (markerRef.current) {
-          markerRef.current.setLatLng([coordinates.lat, coordinates.lng]);
+          markerRef.current.setLatLng([lat, lng]);
         }
-        setTimeout(() => {
-          mapRef.current?.invalidateSize();
-        }, 100);
+        await reverseGeocode(lat, lng);
+      });
+    } else {
+      mapRef.current.setView([coordinates.lat, coordinates.lng], 15);
+      if (markerRef.current) {
+        markerRef.current.setLatLng([coordinates.lat, coordinates.lng]);
       }
     }
 
+    setTimeout(() => {
+      mapRef.current?.invalidateSize();
+    }, 100);
+  }, [step, coordinates.lat, coordinates.lng]);
+
+  useEffect(() => {
     return () => {
-      if (step !== 2 && mapRef.current) {
+      if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
         markerRef.current = null;
       }
     };
-  }, [step]);
+  }, []);
 
   // Leaflet Map Initialization for Step 3 (Read-only display)
   useEffect(() => {

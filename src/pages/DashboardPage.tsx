@@ -1,10 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { getReports } from '../reportsState';
 import type { Report } from '../reportsState';
 import AdminSidebar from '../components/AdminSidebar';
 import AdminHeaderProfile from '../components/AdminHeaderProfile';
 import { CgSpinner } from 'react-icons/cg';
+import {
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  type ChartOptions,
+  LinearScale,
+  Tooltip,
+  type TooltipItem
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip);
+
+const weekDays = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+
+function getStartOfWeek(date: Date) {
+  const start = new Date(date);
+  const day = start.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + diff);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -40,9 +63,78 @@ export default function DashboardPage() {
   // Filter recent activities (last 5 reports)
   const recentActivities = reports.slice(0, 5);
 
-  const getAiClassNames = (report: any) => {
+  const weeklyTrendCounts = useMemo(() => {
+    const startOfWeek = getStartOfWeek(new Date());
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+    return weekDays.map((_, index) => {
+      const dayStart = new Date(startOfWeek);
+      dayStart.setDate(startOfWeek.getDate() + index);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayStart.getDate() + 1);
+
+      return reports.filter((report) => {
+        const createdAt = new Date(report.created_at);
+        return createdAt >= dayStart && createdAt < dayEnd && createdAt < endOfWeek;
+      }).length;
+    });
+  }, [reports]);
+
+  const weeklyTrendChartData = {
+    labels: weekDays,
+    datasets: [
+      {
+        data: weeklyTrendCounts,
+        backgroundColor: weeklyTrendCounts.map((count) => (count === Math.max(...weeklyTrendCounts) && count > 0 ? '#1D4ED8' : 'rgba(29, 78, 216, 0.22)')),
+        borderRadius: 6,
+        borderSkipped: false,
+        barThickness: 36
+      }
+    ]
+  };
+
+  const weeklyTrendChartOptions: ChartOptions<'bar'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'bar'>) => `${context.parsed.y} laporan`
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false
+        },
+        ticks: {
+          color: '#64748B',
+          font: {
+            weight: 700
+          }
+        }
+      },
+      y: {
+        beginAtZero: true,
+        ticks: {
+          precision: 0,
+          color: '#64748B'
+        },
+        grid: {
+          color: 'rgba(148, 163, 184, 0.22)'
+        }
+      }
+    }
+  };
+
+  const getAiClassNames = (report: Report) => {
     if (report.ai_raw_response && Array.isArray(report.ai_raw_response) && report.ai_raw_response.length > 0) {
-      const classes = report.ai_raw_response.map((det: any) => det.class);
+      const classes = report.ai_raw_response.map((det) => det.class);
       return Array.from(new Set(classes)).join(', ');
     }
     return 'Road Damage';
@@ -73,7 +165,7 @@ export default function DashboardPage() {
       {/* Main Content Area */}
       <main className="flex-grow pl-64 min-h-screen flex flex-col">
         {/* Header */}
-        <header className="h-16 bg-surface-container-lowest border-b border-outline-variant px-margin-desktop flex items-center justify-between sticky top-0 z-20">
+        <header className="h-16 bg-surface-container-lowest border-b border-outline-variant px-margin-desktop flex items-center justify-between sticky top-0 z-60">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-on-surface">Administrative Overview</h1>
           </div>
@@ -108,25 +200,10 @@ export default function DashboardPage() {
               {/* Weekly trends chart */}
               <section className="lg:col-span-2 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm flex flex-col justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-on-surface mb-6">Weekly Trends</h2>
+                  <h2 className="text-lg font-bold text-on-surface mb-6">This Week's Trends</h2>
                 </div>
-                <div className="h-64 flex items-end gap-4 px-2">
-                  <div className="flex-1 bg-primary-container/20 rounded-t h-[40%] hover:bg-primary/20 transition-all cursor-pointer" title="Monday: 12 reports"></div>
-                  <div className="flex-1 bg-primary-container/20 rounded-t h-[60%] hover:bg-primary/20 transition-all cursor-pointer" title="Tuesday: 18 reports"></div>
-                  <div className="flex-1 bg-primary-container/20 rounded-t h-[45%] hover:bg-primary/20 transition-all cursor-pointer" title="Wednesday: 14 reports"></div>
-                  <div className="flex-1 bg-primary-container/20 rounded-t h-[80%] hover:bg-primary/20 transition-all cursor-pointer" title="Thursday: 24 reports"></div>
-                  <div className="flex-1 bg-primary-container/20 rounded-t h-[55%] hover:bg-primary/20 transition-all cursor-pointer" title="Friday: 17 reports"></div>
-                  <div className="flex-1 bg-primary-container/20 rounded-t h-[70%] hover:bg-primary/20 transition-all cursor-pointer" title="Saturday: 21 reports"></div>
-                  <div className="flex-1 bg-primary rounded-t h-[90%] hover:opacity-95 transition-all cursor-pointer" title="Sunday: 27 reports (Highest)"></div>
-                </div>
-                <div className="flex justify-between mt-4 text-xs font-semibold text-secondary">
-                  <span>Mon</span>
-                  <span>Tue</span>
-                  <span>Wed</span>
-                  <span>Thu</span>
-                  <span>Fri</span>
-                  <span>Sat</span>
-                  <span>Sun</span>
+                <div className="h-64 px-2">
+                  <Bar data={weeklyTrendChartData} options={weeklyTrendChartOptions} />
                 </div>
               </section>
 
